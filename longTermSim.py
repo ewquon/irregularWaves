@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import interpolate # for calculating bandwidth
 import peaks # for estimating Hs
+from numpy import fft
 from progressbar import ProgressBar, Bar, Percentage
 np.seterr(divide='ignore')
 pi = np.pi
@@ -21,7 +22,7 @@ wm = twopi/Tp       # modal frequency, rad/s
 w0 = wm/2           # smallest frequency
 w1 = 10*wm          # largest frequency
 
-Nwavelets = 100
+Nwavelets = 200 #100 is not enough to recover original B-S averaging over >1000 realizations
 Nrealizations = 1000
 plot_realizations = False
 Nt = 500 # number of points in each realization
@@ -102,12 +103,12 @@ for i,wi in enumerate(w):
 fig0, (ax0,ax1) = plt.subplots(nrows=2,sharex=True)
 fig0.suptitle('Bretschneider spectrum (Hs={:f}, Tp={:f})'.format(Hs,Tp))
 
-ax0.plot(w,S,linewidth=2,label='B-S')
-ax0.set_ylabel('S [m^2/(rad/s)]')
+ax0.plot(w,S,'k-',linewidth=2,label='B-S')
 Srange = ax0.axis()[2:]
+ax0.set_ylabel('S [m^2/(rad/s)]')
 
 #plt.semilogy(w,S) #--scaling is terrible!
-ax1.plot(w,Sdb,label='')
+ax1.plot(w,Sdb,'k-')
 ax1.set_ylim((-55,0))
 ax1.set_ylabel('20 log(S/Smax) [dB]')
 ax1.set_xlabel('w [rad/s]')
@@ -118,9 +119,9 @@ wLH_3dB = Sdb_3dB_fn.roots()
 assert(len(wLH_3dB)==2)
 bw_3dB = np.diff(wLH_3dB)[0]
 print 'low/high frequency at -3 dB:',wLH_3dB
-ax1.plot(wLH_3dB,Sdb_3dB_fn(wLH_3dB)-3.0,'ks',label='-3dB')
-ax0.plot([wLH_3dB[0],wLH_3dB[0]],Srange,'k--',label='')
-ax0.plot([wLH_3dB[1],wLH_3dB[1]],Srange,'k--',label='')
+ax1.plot(wLH_3dB,Sdb_3dB_fn(wLH_3dB)-3.0,'bs',label='-3dB')
+ax0.plot([wLH_3dB[0],wLH_3dB[0]],Srange,'k--')
+ax0.plot([wLH_3dB[1],wLH_3dB[1]],Srange,'k--')
 
 # - find bandwidth from full width at half maximum (FWHM) criterion
 S_FWHM_fn = interpolate.UnivariateSpline(w,S-0.5*np.max(S),s=0)
@@ -129,8 +130,8 @@ assert(len(wLH)==2)
 bw = np.diff(wLH)[0]
 print 'low/high frequency at half maximum:',wLH
 ax1.plot(wLH,Sdb_3dB_fn(wLH)-3.0,'r^',label='FWHM')
-ax0.plot([wLH[0],wLH[0]],Srange,'r--',label='')
-ax0.plot([wLH[1],wLH[1]],Srange,'r--',label='')
+ax0.plot([wLH[0],wLH[0]],Srange,'k-.')
+ax0.plot([wLH[1],wLH[1]],Srange,'k-.')
 
 print '-3 dB bandwidth:',bw_3dB
 print 'FWHM:',bw
@@ -168,25 +169,32 @@ if plot_realizations or debug:
 t = np.linspace(0,Tmax,Nt)
 Z = np.zeros((len(t)))
 Hs_mean = 0.
-with ProgressBar(widgets=['Generating random phase realizations ',Percentage(),Bar()],maxval=Nrealizations) as pbar:
-    for irand in range(Nrealizations):
-        # generate random phases
-        rand_phi = np.random.random(Nwavelets) * twopi
-        ax3.plot(w,rand_phi*180./pi)
-        # calculate elevation profile
-        for i,ti in enumerate(t):
-            Z[i] = np.sum( A*np.cos(-w*ti + rand_phi) )
-        if plot_realizations or debug: plt.plot(t,Z)
-        # find peaks to estimate Hs
-        Zpeaks,ipeaks = peaks.find_peaks(Z,t,Nsmoo=2)
-        imax = np.nonzero( Zpeaks > 0 )
-        maxima = Zpeaks[imax]
-        if debug: plt.plot(t[ipeaks[imax]],maxima,'ro')
-        maxima.sort()
-        Hs_calc = 2*np.mean( maxima[-len(maxima)/3:] )
-        if debug: print 'realization',irand+1,':  Hs =',Hs_calc
-        Hs_mean += Hs_calc
-        pbar.update(irand+1)
+if debug: 
+    print 'Generating random phase realizations'
+else:
+    pbar = ProgressBar(widgets=['Generating random phase realizations ',Percentage(),Bar()],maxval=Nrealizations).start()
+for irand in range(Nrealizations):
+    # generate random phases
+    rand_phi = np.random.random(Nwavelets) * twopi
+    ax3.plot(w,rand_phi*180./pi)
+
+    # calculate elevation profile
+    for i,ti in enumerate(t):
+        Z[i] = np.sum( A*np.cos(-w*ti + rand_phi) )
+    if plot_realizations or debug: plt.plot(t,Z)
+
+    # find peaks to estimate Hs
+    Zpeaks,ipeaks = peaks.find_peaks(Z,t,Nsmoo=2)
+    imax = np.nonzero( Zpeaks > 0 )
+    maxima = Zpeaks[imax]
+    if debug: plt.plot(t[ipeaks[imax]],maxima,'ro')
+    maxima.sort()
+    Hs_calc = 2*np.mean( maxima[-len(maxima)/3:] )
+    if debug: print 'realization',irand+1,':  Hs =',Hs_calc
+    Hs_mean += Hs_calc
+
+    if not debug: pbar.update(irand+1)
+if not debug: pbar.finish()
 Hs_mean /= Nrealizations
 print '  average Hs     =',Hs_mean
 print '  variance (M0)  =',2*M0 # multiply by two since variance is the result of integrating from -inf to inf
@@ -197,44 +205,69 @@ if plot_realizations or debug:
     plt.xlabel('time [s]')
     plt.ylabel('wave elevation [m]')
 t = np.linspace(0,Tmax,Nt)
+dt = t[1]-t[0]
+freq = fft.fftfreq(Nt,dt) * 2*pi #--fftfreq outputs cycles/time
 Z = np.zeros((len(t)))
 Hs_mean = 0.
+Sfft_mean = np.zeros((Nt))
 M0_rand = np.zeros((Nrealizations))
 rand_A2 = np.zeros((Nwavelets))
-with ProgressBar(widgets=['Generating random amplitude realizations ',Percentage(),Bar()],maxval=Nrealizations) as pbar:
-    for irand in range(Nrealizations):
-        # generate random amplitude components
-        sigma_R = np.sqrt(2/pi) * 2*S*dw
-        rand_A2[:] = 0.0
-        for i,sig in enumerate(sigma_R):
-            rand_A2[i] = np.random.rayleigh(scale=sig)
-        rand_A = rand_A2**0.5
-        ax2.plot(w,rand_A)
-        M0_rand[irand] = np.sum(rand_A2)/2 # sum( A2/(2*dw) ) * dw
-        # generate random phase components
-        rand_phi = np.random.random(Nwavelets) * twopi
-        # calculate elevation profile
-        for i,ti in enumerate(t):
-            Z[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
-        if plot_realizations or debug: plt.plot(t,Z)
-        # find peaks to estimate Hs
-        Zpeaks,ipeaks = peaks.find_peaks(Z,t,Nsmoo=2)
-        imax = np.nonzero( Zpeaks > 0 )
-        maxima = Zpeaks[imax]
-        if debug: plt.plot(t[ipeaks[imax]],maxima,'ro')
-        maxima.sort()
-        Hs_calc = 2*np.mean( maxima[-len(maxima)/3:] )
-        if debug: print 'realization',irand+1,':  Hs =',Hs_calc
-        Hs_mean += Hs_calc
-        pbar.update(irand+1)
+if debug:
+    print 'Generating random amplitude realizations'
+else:
+    pbar = ProgressBar(widgets=['Generating random amplitude realizations ',Percentage(),Bar()],maxval=Nrealizations).start()
+for irand in range(Nrealizations):
+    # generate random amplitude components
+    sigma_R = np.sqrt(2/pi) * 2*S*dw
+    rand_A2[:] = 0.0
+    for i,sig in enumerate(sigma_R):
+        rand_A2[i] = np.random.rayleigh(scale=sig)
+    rand_A = rand_A2**0.5
+    ax2.plot(w,rand_A)
+    M0_rand[irand] = np.sum(rand_A2)/2 # sum( A2/(2*dw) ) * dw
+
+    # generate random phase components
+    rand_phi = np.random.random(Nwavelets) * twopi
+
+    # calculate elevation profile
+    for i,ti in enumerate(t):
+        Z[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
+    if plot_realizations or debug: plt.plot(t,Z)
+
+    # find peaks to estimate Hs
+    Zpeaks,ipeaks = peaks.find_peaks(Z,t,Nsmoo=2)
+    imax = np.nonzero( Zpeaks > 0 )
+    maxima = Zpeaks[imax]
+    if debug: plt.plot(t[ipeaks[imax]],maxima,'ro')
+    maxima.sort()
+    Hs_calc = 2*np.mean( maxima[-len(maxima)/3:] )
+    if debug: print 'realization',irand+1,':  Hs =',Hs_calc
+    Hs_mean += Hs_calc
+
+    # perform FFT to verify recovery of spectral content
+    F = fft.fft(Z)/Nt
+    P = np.abs(F)**2
+    df = freq[1]-freq[0]
+    Sfft = P/df
+    if debug: ax0.plot(freq[:Nt/2],Sfft[:Nt/2],label='realization {:d}'.format(irand+1))
+    Sfft_mean += Sfft
+
+    if not debug: pbar.update(irand+1)
+if not debug: pbar.finish()
 Hs_mean /= Nrealizations
+Sfft_mean /= Nrealizations
 print '  average Hs         =',Hs_mean
 print '  average M0         =',2*np.mean(M0_rand)
 print '  variance of M0     =',4*np.var(M0_rand)
 print '  estimated Hs(M0)   =',4*np.mean(M0_rand)**0.5
     
 
-# - plot this last so it ends up on top
+# - plot these last so it ends up on top
+#ax0.plot(freq[:Nt/2],Sfft_mean[:Nt/2],label='average over {:d} realizations'.format(Nrealizations))
+# TODO check: since we threw out the negative-frequency part of spectrum, we lost half the power in the spectrum...?
+ax0.plot(freq[:Nt/2],2*Sfft_mean[:Nt/2],label='average over {:d} realizations'.format(Nrealizations))
+ax0.set_xlim((0,np.max(w)))
+ax0.legend(loc='best')
 ax2.plot(w,A,'k',linewidth=2)
 #-------------------------------------------------------------------------------
 # 
