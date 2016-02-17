@@ -23,8 +23,9 @@ w0 = wm/2           # smallest frequency
 w1 = 10*wm          # largest frequency
 
 Nwavelets = 200 #100 is not enough to recover original B-S averaging over >1000 realizations
-Nrealizations = 1000
+Nrealizations = 500
 plot_realizations = False
+plot_ampfreq = False
 Nt = 500 # number of points in each realization
 
 TOL = 1e-14
@@ -32,10 +33,13 @@ MAXITER = 10
 #############################################
 if use_optimize: from scipy import optimize
 
+Tmax = Nwavelets*twopi/(w1-w0) # time after which the wave train is repeated
+
 if verbose: 
-    print 'INPUT Tp         =',Tp
-    print 'INPUT Hs         =',Hs
-    print 'Calculated wm    =',wm
+    print 'INPUT Tp         =',Tp,'s'
+    print 'INPUT Hs         =',Hs,'m'
+    print 'Calculated wm    =',wm,'rad/s'
+    print 'Calculated Tmax  =',Tmax,'s'
     print '--------------------------------------'
 
 def BSspectrum(w):
@@ -49,8 +53,6 @@ S = BSspectrum(w)
 Sdb = 20*np.log10(S/np.max(S))
 dw = w[1]-w[0]
 A = np.sqrt(2*S*dw)
-
-Tmax = Nwavelets*twopi/(w1-w0) # time after which the wave train is repeated
 
 # - sanity check from Techet 2005 MIT notes, for a narrow-banded spectrum
 M0 = np.sum(S)*dw # zeroth moment a.k.a. spectral variance = sigma^2
@@ -146,10 +148,11 @@ if verbose: print '======================================'
 # Bakkedal2014, eqn 10 :
 # wave elevation, Z(x,t) = sum( A_i * cos(k_i*x - w_i*t + phi) )
 #
-fig1, (ax2,ax3) = plt.subplots(nrows=2,sharex=True)
-ax2.set_ylabel('amplitude [m]')
-ax3.set_ylabel('phase [deg]')
-ax3.set_xlabel('frequency [rad/s]')
+if plot_ampfreq:
+    fig1, (ax2,ax3) = plt.subplots(nrows=2,sharex=True)
+    ax2.set_ylabel('amplitude [m]')
+    ax3.set_ylabel('phase [deg]')
+    ax3.set_xlabel('frequency [rad/s]')
 
 # - uniform phase shift = 0
 #plt.figure()
@@ -172,11 +175,13 @@ Hs_mean = 0.
 if debug: 
     print 'Generating random phase realizations'
 else:
-    pbar = ProgressBar(widgets=['Generating random phase realizations ',Percentage(),Bar()],maxval=Nrealizations).start()
+    pbar = ProgressBar(
+            widgets=['Generating {:d} random phase realizations '.format(Nrealizations),Percentage(),Bar()],
+            maxval=Nrealizations).start()
 for irand in range(Nrealizations):
     # generate random phases
     rand_phi = np.random.random(Nwavelets) * twopi
-    ax3.plot(w,rand_phi*180./pi)
+    if plot_ampfreq: ax3.plot(w,rand_phi*180./pi)
 
     # calculate elevation profile
     for i,ti in enumerate(t):
@@ -215,7 +220,9 @@ rand_A2 = np.zeros((Nwavelets))
 if debug:
     print 'Generating random amplitude realizations'
 else:
-    pbar = ProgressBar(widgets=['Generating random amplitude realizations ',Percentage(),Bar()],maxval=Nrealizations).start()
+    pbar = ProgressBar(
+            widgets=['Generating {:d} random amplitude realizations '.format(Nrealizations),Percentage(),Bar()],
+            maxval=Nrealizations).start()
 for irand in range(Nrealizations):
     # generate random amplitude components
     sigma_R = np.sqrt(2/pi) * 2*S*dw
@@ -223,7 +230,7 @@ for irand in range(Nrealizations):
     for i,sig in enumerate(sigma_R):
         rand_A2[i] = np.random.rayleigh(scale=sig)
     rand_A = rand_A2**0.5
-    ax2.plot(w,rand_A)
+    if plot_ampfreq: ax2.plot(w,rand_A)
     M0_rand[irand] = np.sum(rand_A2)/2 # sum( A2/(2*dw) ) * dw
 
     # generate random phase components
@@ -260,15 +267,15 @@ print '  average Hs         =',Hs_mean
 print '  average M0         =',2*np.mean(M0_rand)
 print '  variance of M0     =',4*np.var(M0_rand)
 print '  estimated Hs(M0)   =',4*np.mean(M0_rand)**0.5
-    
+
 
 # - plot these last so it ends up on top
 #ax0.plot(freq[:Nt/2],Sfft_mean[:Nt/2],label='average over {:d} realizations'.format(Nrealizations))
 # TODO check: since we threw out the negative-frequency part of spectrum, we lost half the power in the spectrum...?
-ax0.plot(freq[:Nt/2],2*Sfft_mean[:Nt/2],label='average over {:d} realizations'.format(Nrealizations))
+ax0.plot(freq[:Nt/2],2*Sfft_mean[:Nt/2],label='avg over {:d} realizations (equal dw)'.format(Nrealizations))
 ax0.set_xlim((0,np.max(w)))
 ax0.legend(loc='best')
-ax2.plot(w,A,'k',linewidth=2)
+if plot_ampfreq: ax2.plot(w,A,'k',linewidth=2)
 #-------------------------------------------------------------------------------
 # 
 # plot sea snapshots
