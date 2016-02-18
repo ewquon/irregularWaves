@@ -2,8 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import peaks # for estimating Hs
-from scipy import optimize # for calculating panel edge positions
-from scipy import integrate
+#from scipy import integrate
 from numpy import fft
 from progressbar import ProgressBar, Bar, Percentage
 np.seterr(divide='ignore')
@@ -14,28 +13,31 @@ twopi = 2.0*pi
 # INPUTS
 verbose = True
 debug = False
+TOL = 1e-14
+
 g  = 9.81
 d  = 70.0           # water depth, m
 Tp = 15.1           # peak period, s
 Hs = 9.0            # significant wave height, m
 wm = twopi/Tp       # modal frequency, rad/s
-wmin = wm/2         # smallest frequency
-wmax = 10*wm        # largest frequency
+#wmin = wm/2         # smallest frequency, rad/s
+wmax = 5*wm        # largest frequency, rad/s
 
+Nwavelets = 30
+Nrealizations = 1
+plot_realizations = True
+Nt = 1000 # number of points to calculate in each realization
 def wave_spectrum(w):    # Bretschneider
     wnorm4 = (w/wm)**4
     return 1.25/4.0 / (w*wnorm4) * Hs**2 * np.exp(-1.25/wnorm4) #m^2/(rad/s)
 
-Nwavelets = 10
-Nrealizations = 1 #500
-plot_realizations = False
-Nt = 500 # number of points in each realization
+wmin = wmax/Nwavelets
+Tfinal = 3*60*60.0  # simulation length, s
 
-TOL = 1e-14
-MAXITER = 10
 #############################################
 
-Tmax = Nwavelets*twopi/(wmax-wmin) # time after which the wave train is repeated
+#Tmax = Nwavelets*twopi/(wmax-wmin) # time after which the wave train is repeated (Baekkedal 2014, p.31)
+Tmax= Nwavelets*twopi/ wmax #limit as wmin->0
 
 if verbose: 
     print 'INPUT Tp         =',Tp,'s'
@@ -51,89 +53,39 @@ dw_equal = w_equal[1]-w_equal[0]
 M0_equal = np.sum(S_equal)*dw_equal # zeroth moment a.k.a. spectral variance = sigma^2
 
 # integrate to get "exact" area under spectral density curve
-M0 = integrate.romberg(wave_spectrum, wmin, wmax, show=verbose, tol=TOL)
-panelarea = M0 / Nwavelets
-#intSdw_quad, abserr, info = integrate.quad(wave_spectrum, wmin, wmax, full_output=True)
-#print intSdw_quad
+#M0 = integrate.romberg(wave_spectrum, wmin, wmax, show=verbose, tol=TOL)
+# - analytical expression obtained by directly integrating the wave spectrum equation
+totalarea = Hs**2/16.0 * (np.exp(-1.25*wm**4/wmax**4) - np.exp(-1.25*wm**4/wmin**4))
+panelarea = totalarea / Nwavelets
 
 # calculate panel edge locations
 w0 = np.zeros((Nwavelets+1))
 w0[0] = wmin
 B = 1.25*wm**4
 for i in range(Nwavelets):
+    # obtained from integrated wave spectrum equation
     w0[i+1] = ( -B / np.log( 16/Hs**2*panelarea + np.exp(-B/w0[i]**4) ) )**0.25
-print 'wmax err:',wmax-w0[-1]
+wmaxerr = wmax - w0[-1]
 w0[-1] = wmax
 
-# optimize positions to get ~equal panel area
-#plt.figure()
-#w0 = np.linspace(wmin,wmax,Nwavelets+1) # frequencies at panel edges, initially evenly distributed
-#plt.plot(w0,np.zeros((Nwavelets+1)),'k+')
+#dw = np.diff(w0)
+#w = (w0[1:] + w0[:-1]) / 2.0
+#S = wave_spectrum( w )
+#M0 = S.dot( dw )
 
-#wi = w0[1:-1]
-#def delta_areas(wi):
-#    w = w0.copy()
-#    w[1:-1] = wi
-#    wmid = (w[1:] + w[:-1]) / 2.0
-#    print 'wmid',wmid
-#    Smid = wave_spectrum( wmid )
-#    dw = np.diff(w)
-#    print Smid*dw
-#    return Smid*dw - panelarea
-##    wi_m1 = w[:-2]
-##    wi_p1 = w[2:]
-##    Si    = wave_spectrum( (wi + wi_m1)/2.0 )
-##    Si_p1 = wave_spectrum( (wi + wi_p1)/2.0 )
-##    print Si
-##    print Si_p1
-##    return (wi - wi_m1)*Si - (wi_p1 - wi)*Si_p1
-#print 'delta areas (before)',delta_areas(wi)
-#result = optimize.leastsq( delta_areas, wi )
-#wnew = result[0]
-#print 'delta areas (after)',delta_areas(wnew)
-#for before,after in zip(w0[1:-1],wnew):
-#    print before,after
-#w0[1:-1] = wnew
-
-#def delta_area_norm(w0):
-#    wmid = (w0[1:] + w0[:-1]) / 2.0
-#    Smid = wave_spectrum( wmid )
-#    delta_areas = Smid*np.diff(w0) - panelarea
-#    return delta_areas.dot( delta_areas )
-#print delta_area_norm(w0)
-#bnds = [ (wmin,wmax) for i in range(Nwavelets+1) ]
-#cons = ({'type':'eq', 'fun': lambda x: x[0] - wmin},
-#        {'type':'eq', 'fun': lambda x: x[-1] - wmax},
-#        {'type':'ineq', 'fun': lambda x: x[1:] - x[:-1]})
-#result = optimize.minimize( delta_area_norm, w0, method='SLSQP', bounds=bnds, constraints=cons )
-#print result.message
-#for before,after in zip(w0,result.x):
-#    print before,after
-#w0 = result.x
-#print w0
-#print delta_area_norm(w0)
-
-#wnew = w0.copy()
-#for i in range(1,Nwavelets):
-#    fn = lambda x: (x-w0[i-1])*wave_spectrum((x+w0[i-1])/2.0) - panelarea
-#    wnew[i] = optimize.fsolve( fn, wnew[i-1] )
-#for before,after in zip(w0,wnew):
-#    print before,after
-#w0 = wnew
-
-dw = np.diff(w0)
-w = (w0[1:] + w0[:-1]) / 2.0
-S = wave_spectrum( w )
-#plt.plot(w,np.zeros((Nwavelets)),'r*')
-print panelarea,S*dw
-plt.show()
+dw = dw_equal*np.ones((Nwavelets))
+w  = w_equal
+S  = S_equal
+M0 = M0_equal
 
 if verbose: 
-    print 'Note that differences are due to wmin > 0 and wmax < inf'
-    print 'exact: estimated Hs from spectrum    =',4*M0**0.5
     print ''
-    print 'equal dw: calculated variance        =',M0_equal
-    print 'equal dw: estimated Hs from spectrum =',4*M0_equal**0.5
+    print 'Hs from truncated spectrum       =', 4*totalarea**0.5
+    print '  equal dw : calculated variance =', M0_equal
+    print '  equal dw : estimated Hs        =', 4*M0_equal**0.5
+    print '  equal A  : calculated variance =', M0
+    print '  equal A  : estimated Hs        =', 4*M0**0.5
+    print 'wmax err:',wmaxerr,' (accumulated numerical error in calculating panel edges)'
     print '--------------------------------------'
     print ''
 
@@ -154,6 +106,8 @@ if plot_realizations or debug:
 t = np.linspace(0,Tmax,Nt)
 dt = t[1]-t[0]
 freq = fft.fftfreq(Nt,dt) * 2*pi #--fftfreq outputs cycles/time
+df = freq[1]-freq[0]
+if verbose: print 'dt =',dt,'s  df =',df,'rad/s'
 Z = np.zeros((len(t)))
 Hs_mean = 0.
 Sfft_mean = np.zeros((Nt))
@@ -172,14 +126,20 @@ for irand in range(Nrealizations):
     sigma_R = np.sqrt(2/pi) * 2*S*dw
     rand_A2[:] = 0.0
     for i,sig in enumerate(sigma_R):
+        if sig==0:
+            rand_A2[i] = 0.0
+            continue
         rand_A2[i] = np.random.rayleigh(scale=sig)
     rand_A = rand_A2**0.5
-    M0_rand[irand] = np.sum(rand_A2)/2 # sum( A2/(2*dw) ) * dw
+    M0_rand[irand] = np.sum(rand_A2)/2 #--eqn 97
 
     # generate random phase components
     rand_phi = np.random.random(Nwavelets) * twopi
 
     # calculate elevation profile
+    if verbose:
+        for i in range(Nwavelets):
+            print 'wavelet {:d}: w={:f}, A={:f}, phi={:f}'.format(i+1,w[i],rand_A[i],rand_phi[i])
     for i,ti in enumerate(t):
         Z[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
     if plot_realizations or debug: plt.plot(t,Z)
@@ -197,10 +157,23 @@ for irand in range(Nrealizations):
     # perform FFT to verify recovery of spectral content
     F = fft.fft(Z)/Nt
     P = np.abs(F)**2
-    df = freq[1]-freq[0]
     Sfft = P/df
     if debug: ax0.plot(freq[:Nt/2],Sfft[:Nt/2],label='realization {:d}'.format(irand+1))
     Sfft_mean += Sfft
+
+    # DEBUG--overlay repeated intervals
+    t2= np.linspace(  Tmax,2*Tmax,Nt) # DEBUG
+    t3= np.linspace(2*Tmax,3*Tmax,Nt) # DEBUG
+    Z2 = np.zeros((Nt))
+    Z3 = np.zeros((Nt))
+    for i,ti in enumerate(t2):
+        Z2[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
+    if plot_realizations or debug: plt.plot(t2-t2[0],Z2)
+    print np.max(np.abs(Z2-Z))
+    for i,ti in enumerate(t3):
+        Z3[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
+    if plot_realizations or debug: plt.plot(t3-t3[0],Z3)
+    print np.max(np.abs(Z3-Z))
 
     if not debug: pbar.update(irand+1)
 if not debug: pbar.finish()
@@ -217,15 +190,21 @@ if verbose:
 #
 # plot spectrum
 #
+plotfn = ax.plot #ax.loglog
 wplot = np.linspace(wmin,wmax,1000)
-ax.plot(wplot,wave_spectrum(wplot),'k-',linewidth=2,label='B-S')
-ax.plot(w,S,'ks')
-for wi in w0: ax.plot([wi,wi],[0,wave_spectrum(wi)],'0.8')
-ax.set_ylabel('S [m^2/(rad/s)]')
+plotfn(wplot,wave_spectrum(wplot),'k-',linewidth=2,label='B-S')
+
+# plot panel outlines
+plotfn(w,S,'ks')
+for wi in w0: plotfn([wi,wi],[0,wave_spectrum(wi)],'0.8')
+
 # TODO check: since we threw out the negative-frequency part of spectrum, we lost half the power in the spectrum...
 #             thus the factor of two?
-ax.plot(freq[:Nt/2],2*Sfft_mean[:Nt/2],label='avg over {:d} realizations (equal dw)'.format(Nrealizations))
-ax.set_xlim((0,wmax))
+plotfn(freq[:Nt/2],2*Sfft_mean[:Nt/2],'-o',label='avg over {:d} realizations (equal dw)'.format(Nrealizations))
+ax.set_xlim((wmin,wmax))
+#ax.set_ylim((TOL,100))
+ax.set_xlabel('w [rad/s]')
+ax.set_ylabel('S [m^2/(rad/s)]')
 ax.legend(loc='best')
 
 #-------------------------------------------------------------------------------
