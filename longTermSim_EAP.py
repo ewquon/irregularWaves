@@ -24,14 +24,16 @@ wm = twopi/Tp       # modal frequency, rad/s
 Tmax = 3*60*60.0    # simulation length, s
 wmax = 5*wm
 
-Nwavelets = 30
-Nrealizations = 1 #500
+Nwavelets = 50
+Nrealizations = 500 #500
+binned_averages = True
 use_equal_dw = False
-Nt = 10000 # number of points to calculate in each realization for estimating Hs and FFT calc
-plot_realizations = True       # should set Nrealizations=1 for this to be useful
+random_amplitude = False # True
+
+#Nt = 10000 # number of points to calculate in each realization for estimating Hs and FFT calc
+plot_realizations = False       # should set Nrealizations=1 for this to be useful
 plot_overlay = False            # only active if plot_realizations==True
-optimize_panel_areas = False    # doesn't seem to work...
-# can calculate from Tmax and dt
+optimize_panel_areas = False    # doesn't seem to work or matter...
 
 def wave_spectrum(w):    # Bretschneider
     wnorm4 = (w/wm)**4
@@ -39,25 +41,21 @@ def wave_spectrum(w):    # Bretschneider
 
 #############################################
 
-#Tmax = Nwavelets*twopi/(wmax-wmin) # time after which the wave train is repeated (Baekkedal 2014, p.31)
-#Tmax = Nwavelets*twopi/ wmax # limit as wmin->0; matches "sampling theorem" from Duarte 2014, p.2
-#deltaw = twopi/Tmax
-#wmin = deltaw
-#wmax = Nwavelets*deltaw
-
 if verbose: 
+    if use_equal_dw: print '*** USING EQUAL DW SCHEME INSTEAD OF EQUAL AREA (FOR DEBUG) ***'
     print 'INPUT # wave components  =',Nwavelets
     print 'INPUT Tp                 =',Tp,'s'
     print 'INPUT Hs                 =',Hs,'m'
     print 'INPUT Tmax               =',Tmax,'s'
     print 'INPUT wmax               =',wmax,'rad/s'
     print 'Calculated wm            =',wm,'rad/s'
-    #print 'Calculated wmin          =',wmin,'rad/s'
     print '--------------------------------------'
 
 # OLD equal dw scheme
+deltaw = twopi/Tmax
 #w_equal = np.linspace(wmin,wmax,Nwavelets)
-w_equal = np.linspace(0.0,wmax,Nwavelets)
+Nequiv = int(np.ceil(wmax/deltaw))
+w_equal = np.arange(deltaw,(Nequiv+1)*deltaw,deltaw)
 S_equal = wave_spectrum(w_equal)
 dw_equal = w_equal[1]-w_equal[0]
 M0_equal = np.sum(S_equal)*dw_equal # zeroth moment a.k.a. spectral variance = sigma^2
@@ -83,7 +81,7 @@ wmaxerr = wmax - w0[-1]
 w0[-1] = wmax
 
 dw = np.diff(w0)
-w = (w0[1:] + w0[:-1]) / 2.0
+w = (w0[1:] + w0[:-1]) / 2.0 #midpoints
 S = wave_spectrum( w )
 M0 = S.dot( dw )
 areas = S*dw
@@ -91,27 +89,28 @@ areas = S*dw
 # DEBUG--use constant instead of variable dw
 if use_equal_dw:
     assert( dw_equal == deltaw )
+    Nwavelets = Nequiv
     dw = dw_equal*np.ones((Nwavelets))
+    w0 = np.zeros((Nwavelets+1))
+    w0[1:] = w_equal
     w  = w_equal
     S  = S_equal
     M0 = M0_equal
 
 if verbose: 
     print ''
-    print 'Exact variance                   =', totalarea
+    print 'Exact variance (analytical)      =', totalarea
     print 'Hs from truncated spectrum       =', 4*totalarea**0.5
+    print '  equal dw : equivalent Nwaves   =', Nequiv,' (to get wmax==Nwaves*dw)'
     print '  equal dw : calculated variance =', M0_equal
     print '  equal dw : estimated Hs        =', 4*M0_equal**0.5
-    print '  equal A  : calculated variance =', M0
-    print '  equal A  : estimated Hs        =', 4*M0**0.5
+    if not use_equal_dw:
+        print '  equal A  : calculated variance =', M0
+        print '  equal A  : estimated Hs        =', 4*M0**0.5
     print ''
     print 'wmax err:',wmaxerr,' (accumulated numerical error in calculating panel edges)'
     print 'expected/average/stdev/min panel areas',panelarea,np.mean(areas),np.std(areas),np.min(areas)
     if debug: print '  areas:',areas
-
-# DEBUG
-#for Ai,err in zip(S*dw,S*dw-panelarea):
-#    print Ai,err
 
 #-------------------------------------------------------------------------------
 #
@@ -148,7 +147,7 @@ if optimize_panel_areas:# {{{
     dw = np.diff(w0)
     w = (w0[1:] + w0[:-1]) / 2.0
     S = wave_spectrum( w )
-    print 'average/expected/stdev panel areas',np.mean(S*dw),panelarea,np.std(S*dw)# }}}
+    print 'average/expected/stdev panel areas',np.mean(areas),panelarea,np.std(areas)# }}}
 
 #-------------------------------------------------------------------------------
 #
@@ -159,24 +158,31 @@ if optimize_panel_areas:# {{{
 #
 fig, ax = plt.subplots(nrows=1)
 fig.suptitle('Wave spectrum, {:d} components (Hs={:f}, Tp={:f})'.format(Nwavelets,Hs,Tp))
-
 if plot_realizations or debug:
     plt.figure()
     plt.xlabel('time [s]')
     plt.ylabel('wave elevation [m]')
+
+#t = np.linspace(0,Tmax,Nt)
+#dt = t[1]-t[0]
+Nt = 2*Nequiv
+dt = Tmax/Nt
 t = np.linspace(0,Tmax,Nt)
-#t = np.arange(0,Tmax+dt,dt)
-#Nt = len(t)
-#print 'Nt =',Nt
-dt = t[1]-t[0]
 freq = fft.fftfreq(Nt,dt) * 2*pi #--fftfreq outputs cycles/time
 dfreq = freq[1]-freq[0]
 print 'dt,df,dw(min|max|avg) =',dt,dfreq,np.min(dw),np.max(dw),np.mean(dw)
+#Ns = 2*int(np.ceil(wmax*Tmax/pi))
+#Nfft = min( Nt, Ns )
+#print 'N samples needed for specified wmax :',Ns
+Nfft = Nt
+print 'using Nfft, Nt =',Nfft,Nt
+
 Z = np.zeros((len(t)))
 Hs_mean = 0.
 A_max_mean = 0.
 A_max_abs = 0.
-Sfft_mean = np.zeros((Nt))
+#Sfft_mean = np.zeros((Nt))
+Sfft_mean = np.zeros((Nfft))
 M0_rand = np.zeros((Nrealizations))
 rand_A2 = np.zeros((Nwavelets))
 
@@ -187,19 +193,25 @@ else:
     pbar = ProgressBar(
             widgets=['Generating {:d} random amplitude realizations '.format(Nrealizations),Percentage(),Bar()],
             maxval=Nrealizations).start()
-#print S*dw
+# BEGIN MAIN LOOP HERE
+# vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 for irand in range(Nrealizations):
 
     # generate random amplitude components
-    sigma_R = np.sqrt(2/pi) * 2*S*dw
-    rand_A2[:] = 0.0
-    for i,sig in enumerate(sigma_R):
-        if sig==0:
-            rand_A2[i] = 0.0
-            continue
-        rand_A2[i] = np.random.rayleigh(scale=sig)
-    rand_A = rand_A2**0.5
-    M0_rand[irand] = np.sum(rand_A2)/2 #--eqn 97
+    # ref: DNV-RP-C205 Sec. 3.3.2
+    if random_amplitude:
+        sigma_R = np.sqrt(2/pi) * 2*S*dw # mean: 2*panelarea
+        rand_A2[:] = 0.0
+        for i,sig in enumerate(sigma_R):
+            if sig==0:
+                rand_A2[i] = 0.0
+                continue
+            rand_A2[i] = np.random.rayleigh(scale=sig)
+        rand_A = rand_A2**0.5
+        M0_rand[irand] = np.sum(rand_A2)/2.0 #--eqn 100
+    else:
+        rand_A = np.sqrt(2*S*dw)
+        M0_rand[irand] = np.sum(rand_A**2)/2.0
 
     # generate random phase components
     rand_phi = np.random.random(Nwavelets) * twopi
@@ -226,14 +238,16 @@ for irand in range(Nrealizations):
     A_max_abs = max(A_max_abs,zmax)
 
     # perform FFT to verify recovery of spectral content
-    F = fft.fft(Z)/Nt
+    #F = fft.fft(Z)/Nt
+    F = fft.fft(Z[:Nfft])/Nfft
     P = np.abs(F)**2
-    Sfft = P/dfreq
-    if debug: ax0.plot(freq[:Nt/2],Sfft[:Nt/2],label='realization {:d}'.format(irand+1))
+    Sfft = P / dfreq
+    #if debug: ax0.plot(freq[:Nt/2],Sfft[:Nt/2],label='realization {:d}'.format(irand+1))
+    if debug: ax0.plot(freq[:Nfft/2],Sfft[:Nfft/2],label='realization {:d}'.format(irand+1))
     Sfft_mean += Sfft
 
     # DEBUG--overlay repeated intervals
-    if plot_realizations and plot_overlay:
+    if plot_realizations and plot_overlay:# {{{
         t2 = np.linspace(  Tmax,2*Tmax,Nt)
         t3 = np.linspace(2*Tmax,3*Tmax,Nt)
         Z2 = np.zeros((Nt))
@@ -245,9 +259,11 @@ for irand in range(Nrealizations):
         for i,ti in enumerate(t3):
             Z3[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
         if plot_realizations or debug: plt.plot(t3-t3[0],Z3)
-        print np.max(np.abs(Z3-Z))
+        print np.max(np.abs(Z3-Z))# }}}
 
     if not debug: pbar.update(irand+1)
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# END MAIN LOOP
 if not debug: pbar.finish()
 Hs_mean /= Nrealizations
 A_max_mean /= Nrealizations
@@ -263,11 +279,27 @@ if verbose:
 
 #-------------------------------------------------------------------------------
 #
+# calculated binned average
+#
+if not use_equal_dw and binned_averages:
+    freqhalf = freq[:Nfft/2]
+    Sffthalf = 2*Sfft_mean[:Nfft/2]
+    Sfft_mean_binned = np.zeros((Nwavelets))
+    Nbin = np.zeros((Nwavelets))
+    for i in range(Nwavelets):
+        b1 = freqhalf >= w0[i]
+        b2 = freqhalf  < w0[i+1]
+        idx = np.nonzero( b1*b2 )[0]
+        Nbin[i] = len(idx)
+        Sfft_mean_binned[i] = np.sum( Sffthalf[idx] ) / Nbin[i]
+    assert( np.sum(Nbin) == Nfft/2 )
+
+#-------------------------------------------------------------------------------
+#
 # plot spectrum
 #
 plotfn = ax.plot #ax.loglog
-#wplot = np.linspace(wmin,wmax,1000)
-wplot = np.linspace(0.0,wmax,1000)
+wplot = np.linspace(0,wmax,1000)[1:]
 plotfn(wplot,wave_spectrum(wplot),'k-',linewidth=2,label='B-S')
 
 #plotfn(w_equal,S_equal,'ro',markersize=4,mfc='r',mec='r')
@@ -278,7 +310,13 @@ for wi in w0[1:-1]: plotfn([wi,wi],[0,wave_spectrum(wi)],'0.8')
 
 # TODO check: since we threw out the negative-frequency part of spectrum, we lost half the power in the spectrum...
 #             thus the factor of two?
-plotfn(freq[:Nt/2],2*Sfft_mean[:Nt/2],'-o',label='avg over {:d} realizations (equal dw)'.format(Nrealizations))
+if use_equal_dw: scheme = 'equal dw'
+else: scheme = 'equal energy'
+plotfn(freq[:Nfft/2],2*Sfft_mean[:Nfft/2],'bo-',
+        label='avg over {:d} realizations ({:s})'.format(Nrealizations,scheme))
+if binned_averages:
+    plotfn(w,Sfft_mean_binned,'b--',linewidth=3,
+            label='binned avg over {:d} realizations ({:s})'.format(Nrealizations,scheme))
 ax.set_xlim((0,wmax))
 #ax.set_ylim((TOL,100))
 ax.set_xlabel('w [rad/s]')

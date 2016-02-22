@@ -6,6 +6,7 @@ import peaks # for estimating Hs
 from scipy import optimize
 from numpy import fft
 from progressbar import ProgressBar, Bar, Percentage
+import time
 np.seterr(divide='ignore')
 pi = np.pi
 twopi = 2.0*pi
@@ -15,6 +16,7 @@ twopi = 2.0*pi
 verbose = True
 debug = False
 TOL = 1e-14
+MAXITER = 25
 
 g  = 9.81
 d  = 70.0           # water depth, m
@@ -23,11 +25,14 @@ Hs = 9.0            # significant wave height, m
 wm = twopi/Tp       # modal frequency, rad/s
 Tmax = 3*60*60.0    # simulation length, s
 
-Nwavelets = 2000
-Nrealizations = 100 #500
-Nt = 10000 # number of points to calculate in each realization for estimating Hs and FFT calc
-plot_realizations = False       # should set Nrealizations=1 for this to be useful
-plot_overlay = True            # only active if plot_realizations==True
+write_coeffs = True
+write_name = 'equalDw'
+
+Nwavelets = 5000
+Nrealizations = 10 #500
+#Nt = 10000 # number of points to calculate in each realization for estimating Hs and FFT calc
+plot_realizations = True       # should set Nrealizations=1 for this to be useful
+plot_overlay = False            # only active if plot_realizations==True
 optimize_panel_areas = False
 
 def wave_spectrum(w):    # Bretschneider
@@ -72,6 +77,34 @@ if verbose:
 
 #-------------------------------------------------------------------------------
 #
+# if outputting coefficients, need to calculate wavenumbers
+#
+k = np.zeros((len(w)))
+if write_coeffs:
+    k = np.zeros((len(w)))
+    kguess = w**2/g
+    if verbose: print 'Calculating wavenumbers...'
+    for i,wi in enumerate(w):
+        def newton_step(k):
+            kd = k*d
+            tkd = np.tanh(kd)
+            return k*tkd - wi**2/g, kd*(1-tkd**2) + tkd # F(k), dF/dk
+        ki = kguess[i]
+        niter = 0
+        F,J = newton_step(ki)
+        if debug: print '  iter',niter,'resid',F
+        while niter < MAXITER and np.abs(F) > TOL:
+            ki += -F/J
+            niter += 1
+            F,J = newton_step(ki)
+            if debug: print '  iter',niter,'resid',F
+        if niter >= MAXITER: print 'WARNING: max newton iterations reached!'
+        if debug: 
+            if niter < MAXITER: print 'newton iteration converged in',niter,'steps'
+        k[i] = ki
+
+#-------------------------------------------------------------------------------
+#
 # generate and plot time history
 #
 # Bakkedal2014, eqn 10 :
@@ -84,6 +117,9 @@ if plot_realizations or debug:
     plt.figure()
     plt.xlabel('time [s]')
     plt.ylabel('wave elevation [m]')
+Nt = 2*Nwavelets
+dt = Tmax/Nt
+print 'Nt=',Nt
 t = np.linspace(0,Tmax,Nt)
 dt = t[1]-t[0]
 freq = fft.fftfreq(Nt,dt) * 2*pi #--fftfreq outputs cycles/time
@@ -162,6 +198,26 @@ for irand in range(Nrealizations):
             Z3[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
         if plot_realizations or debug: plt.plot(t3-t3[0],Z3)
         print np.max(np.abs(Z3-Z))
+
+    if write_coeffs:
+        fname = 'Hs{:.1f}_Tp{:.1f}_{:s}_coeffs{:d}.txt'.format(Hs,Tp,write_name,irand)
+        with open(fname,'w') as f:
+            f.write('# Irregular wave realization with random amplitude & phase\n')
+            f.write('# Discretized with constant delta-w\n')
+            f.write('# {:s}\n'.format(time.strftime("%c")))
+            f.write('#\n')
+            f.write('#    g:\t{:f}\t(m/s^2)\n'.format(g))
+            f.write('#    d:\t{:f}\t(m/s^2)\n'.format(d))
+            f.write('#   Hs:\t{:f}\t(m)\n'.format(Hs))
+            f.write('#   Tp:\t{:f}\t(s)\n'.format(Tp))
+            f.write('# Tmax:\t{:f}\t(s)\n'.format(Tmax))
+            f.write('#   wm:\t{:f}\t(s, modal frequency)\n'.format(wm))
+            f.write('#    N:\t{:d}\t(-, number of wave components)\n'.format(Nwavelets))
+            f.write('#\n')
+            f.write('#\tfrequency\tSpectAmp\tPhase\twavenumber\n')
+            f.write('#\t (rad/s) \t (m^2*s)\t(rad)\t   (1/m)  \n')
+            for wi,Si,phii,ki in zip(w,rand_A2/dw,rand_phi,k):
+                f.write('{:f}\t{:f}\t{:f}\t{:f}\n'.format( wi, Si, phii, ki ))
 
     if not debug: pbar.update(irand+1)
 if not debug: pbar.finish()
