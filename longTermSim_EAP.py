@@ -24,7 +24,7 @@ wm = twopi/Tp       # modal frequency, rad/s
 Tmax = 3*60*60.0    # simulation length, s
 wmax = 5*wm
 
-Nwavelets = 50
+Nwavelets = 25
 Nrealizations = 500 #500
 binned_averages = True
 use_equal_dw = False
@@ -183,6 +183,7 @@ A_max_mean = 0.
 A_max_abs = 0.
 #Sfft_mean = np.zeros((Nt))
 Sfft_mean = np.zeros((Nfft))
+#if not use_equal_dw and binned_averages: Sfft_mean_binned = np.zeros((Nwavelets))
 M0_rand = np.zeros((Nrealizations))
 rand_A2 = np.zeros((Nwavelets))
 
@@ -246,6 +247,18 @@ for irand in range(Nrealizations):
     if debug: ax0.plot(freq[:Nfft/2],Sfft[:Nfft/2],label='realization {:d}'.format(irand+1))
     Sfft_mean += Sfft
 
+    # get binned average of FFT-generated spectrum
+    #freqhalf = freq[:Nfft/2]
+    #Sffthalf = 2*Sfft[:Nfft/2]
+    #Nbin = np.zeros((Nwavelets))
+    #for i in range(Nwavelets):
+    #    b1 = freqhalf >= w0[i]
+    #    b2 = freqhalf  < w0[i+1]
+    #    idx = np.nonzero( b1*b2 )[0]
+    #    Nbin[i] = len(idx)
+    #    Sfft_mean_binned[i] += np.sum( Sffthalf[idx] ) / Nbin[i]
+    #assert( np.sum(Nbin) == Nfft/2 )
+
     # DEBUG--overlay repeated intervals
     if plot_realizations and plot_overlay:# {{{
         t2 = np.linspace(  Tmax,2*Tmax,Nt)
@@ -268,6 +281,7 @@ if not debug: pbar.finish()
 Hs_mean /= Nrealizations
 A_max_mean /= Nrealizations
 Sfft_mean /= Nrealizations
+#if not use_equal_dw and binned_averages: Sfft_mean_binned /= Nrealizations
 
 if verbose:
     print '  absolute max amp.  =', A_max_abs
@@ -282,9 +296,9 @@ if verbose:
 # calculated binned average
 #
 if not use_equal_dw and binned_averages:
+    Sfft_mean_binned = np.zeros((Nwavelets))
     freqhalf = freq[:Nfft/2]
     Sffthalf = 2*Sfft_mean[:Nfft/2]
-    Sfft_mean_binned = np.zeros((Nwavelets))
     Nbin = np.zeros((Nwavelets))
     for i in range(Nwavelets):
         b1 = freqhalf >= w0[i]
@@ -312,11 +326,12 @@ for wi in w0[1:-1]: plotfn([wi,wi],[0,wave_spectrum(wi)],'0.8')
 #             thus the factor of two?
 if use_equal_dw: scheme = 'equal dw'
 else: scheme = 'equal energy'
-plotfn(freq[:Nfft/2],2*Sfft_mean[:Nfft/2],'bo-',
-        label='avg over {:d} realizations ({:s})'.format(Nrealizations,scheme))
 if binned_averages:
-    plotfn(w,Sfft_mean_binned,'b--',linewidth=3,
+    plotfn(w,Sfft_mean_binned,'bo',linewidth=3,
             label='binned avg over {:d} realizations ({:s})'.format(Nrealizations,scheme))
+else:
+    plotfn(freq[:Nfft/2],2*Sfft_mean[:Nfft/2],'bo-',
+            label='avg over {:d} realizations ({:s})'.format(Nrealizations,scheme))
 ax.set_xlim((0,wmax))
 #ax.set_ylim((TOL,100))
 ax.set_xlabel('w [rad/s]')

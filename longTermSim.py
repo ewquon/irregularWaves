@@ -27,9 +27,10 @@ Tmax = 3*60*60.0    # simulation length, s
 
 write_coeffs = True
 write_name = 'equalDw'
+x_start = -300.0    # CFD inlet location, m
 
 Nwavelets = 5000
-Nrealizations = 10 #500
+Nrealizations = 1 #500
 #Nt = 10000 # number of points to calculate in each realization for estimating Hs and FFT calc
 plot_realizations = True       # should set Nrealizations=1 for this to be useful
 plot_overlay = False            # only active if plot_realizations==True
@@ -79,29 +80,34 @@ if verbose:
 #
 # if outputting coefficients, need to calculate wavenumbers
 #
+def newton_step(w,k):
+    kd = k*d
+    tkd = np.tanh(kd)
+    return k*tkd - w**2/g, kd*(1-tkd**2) + tkd # F(k), dF/dk
+def solve_k(wi,ki):
+    niter = 0
+    F,J = newton_step(wi,ki)
+    if debug: print '  iter',niter,'resid',F
+    while niter < MAXITER and np.abs(F) > TOL:
+        ki += -F/J
+        niter += 1
+        F,J = newton_step(wi,ki)
+        if debug: print '  iter',niter,'resid',F
+    if niter >= MAXITER: print 'WARNING: max newton iterations reached!'
+    if debug: 
+        if niter < MAXITER: print 'newton iteration converged in',niter,'steps'
+    return ki
+print 'peak wavenumber (at modal frequency):',solve_k(wm,wm**2/g),'1/m'
+
 k = np.zeros((len(w)))
 if write_coeffs:
     k = np.zeros((len(w)))
     kguess = w**2/g
     if verbose: print 'Calculating wavenumbers...'
     for i,wi in enumerate(w):
-        def newton_step(k):
-            kd = k*d
-            tkd = np.tanh(kd)
-            return k*tkd - wi**2/g, kd*(1-tkd**2) + tkd # F(k), dF/dk
-        ki = kguess[i]
-        niter = 0
-        F,J = newton_step(ki)
-        if debug: print '  iter',niter,'resid',F
-        while niter < MAXITER and np.abs(F) > TOL:
-            ki += -F/J
-            niter += 1
-            F,J = newton_step(ki)
-            if debug: print '  iter',niter,'resid',F
-        if niter >= MAXITER: print 'WARNING: max newton iterations reached!'
-        if debug: 
-            if niter < MAXITER: print 'newton iteration converged in',niter,'steps'
-        k[i] = ki
+        #ki = kguess[i]
+        #k[i] = ki
+        k[i] = solve_k( wi, kguess[i] )
 
 #-------------------------------------------------------------------------------
 #
@@ -200,23 +206,25 @@ for irand in range(Nrealizations):
         print np.max(np.abs(Z3-Z))
 
     if write_coeffs:
-        fname = 'Hs{:.1f}_Tp{:.1f}_{:s}_coeffs{:d}.txt'.format(Hs,Tp,write_name,irand)
+        fname = 'Hs{:.0f}_Tp{:.0f}_{:s}_coeffs{:d}.txt'.format(Hs,Tp,write_name,irand)
         with open(fname,'w') as f:
             f.write('# Irregular wave realization with random amplitude & phase\n')
             f.write('# Discretized with constant delta-w\n')
             f.write('# {:s}\n'.format(time.strftime("%c")))
             f.write('#\n')
-            f.write('#    g:\t{:f}\t(m/s^2)\n'.format(g))
-            f.write('#    d:\t{:f}\t(m/s^2)\n'.format(d))
-            f.write('#   Hs:\t{:f}\t(m)\n'.format(Hs))
-            f.write('#   Tp:\t{:f}\t(s)\n'.format(Tp))
-            f.write('# Tmax:\t{:f}\t(s)\n'.format(Tmax))
-            f.write('#   wm:\t{:f}\t(s, modal frequency)\n'.format(wm))
-            f.write('#    N:\t{:d}\t(-, number of wave components)\n'.format(Nwavelets))
+            f.write('#       g:\t{:f}\t(m/s^2)\n'.format(g))
+            f.write('#       d:\t{:f}\t(m/s^2)\n'.format(d))
+            f.write('#      Hs:\t{:f}\t(m)\n'.format(Hs))
+            f.write('#      Tp:\t{:f}\t(s)\n'.format(Tp))
+            f.write('# x_start:\t{:f}\t(m, CFD inlet location)\n'.format(x_start))
+            f.write('#    Tmax:\t{:f}\t(s)\n'.format(Tmax))
+            f.write('#      wm:\t{:f}\t(s, modal frequency)\n'.format(wm))
+            f.write('#       N:\t{:d}\t(-, number of wave components)\n'.format(Nwavelets))
             f.write('#\n')
             f.write('#\tfrequency\tSpectAmp\tPhase\twavenumber\n')
             f.write('#\t (rad/s) \t (m^2*s)\t(rad)\t   (1/m)  \n')
-            for wi,Si,phii,ki in zip(w,rand_A2/dw,rand_phi,k):
+            # wave elevation, Z(x,t) = sum( S_i**0.5 * cos(k_i*x - w_i*t - phi) ) * dw
+            for wi,Si,phii,ki in zip(w,rand_A2/dw**2,-rand_phi,k):
                 f.write('{:f}\t{:f}\t{:f}\t{:f}\n'.format( wi, Si, phii, ki ))
 
     if not debug: pbar.update(irand+1)
@@ -276,6 +284,6 @@ ax.legend(loc='best')
 #    ax_snapshot[itime].set_ylim((-1.5*Hs,1.5*Hs))
 
 
-
+plt.xlim((0,300))
 plt.show()
 
