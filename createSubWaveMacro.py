@@ -10,6 +10,7 @@ t_peak = 0.0 # time offset
 x_start = 0.0 # inflow location relative to device
 output_zero_amplitude = False
 verbose = True
+maxWaves_per_file = 2500
 
 # TODO: Update header as needed (e.g. to change the name of the physics
 #       continuum or the superposition VOF wave
@@ -28,6 +29,15 @@ public class {macroName:s} extends StarMacro {{
     execute0();
   }}
 
+  private void addSubWave( SuperpositionVofWave supWave, double A, double phi, double T ) {{
+    FirstOrderSuperposingVofWave subwave = 
+      supWave.getSuperposingVofWaveManager().createSuperposingVofWave(FirstOrderSuperposingVofWave.class, "FirstOrderSuperposing");
+    subwave.getAmplitude().setValue(A); // m
+    subwave.getPhase().setValue(phi); // radians
+    subwave.getSpecificationOption().setSelected(VofWaveSpecificationOption.WAVE_PERIOD_SPECIFIED);
+    ((VofWavePeriodSpecification) subwave.getVofWaveSpecification()).getWavePeriod().setValue(T); // seconds
+  }}
+
   private void execute0() {{
 
     Simulation simulation_0 = getActiveSimulation();
@@ -40,15 +50,7 @@ public class {macroName:s} extends StarMacro {{
 """
 
 # TODO: Update subwave specification as needed
-wavestr = """
-    FirstOrderSuperposingVofWave subwave{waveIdx:d} = 
-      supWave.getSuperposingVofWaveManager().createSuperposingVofWave(FirstOrderSuperposingVofWave.class, "FirstOrderSuperposing");
-    subwave{waveIdx:d}.getAmplitude().setValue({:f}); // m
-    subwave{waveIdx:d}.getPhase().setValue({:f}); // radians
-    subwave{waveIdx:d}.getSpecificationOption().setSelected(VofWaveSpecificationOption.WAVE_PERIOD_SPECIFIED);
-    ((VofWavePeriodSpecification) subwave{waveIdx:d}.getVofWaveSpecification()).getWavePeriod().setValue({:f}); // seconds
-"""
-
+wavestr = "    addSubWave( supWave, {:f}, {:f}, {:f} );\n"
 closestr = """
   }
 }"""
@@ -62,26 +64,47 @@ name = '.'.join(fname.split('.')[:-1])
 
 #-- first time: get delta omega
 dw = 0
+Nwaves = 0
 with open(fname,'r') as f:
     for line in f:
-        if line.startswith('#'): continue
+        if line.startswith('#'): #continue
+            line = line.split()
+            try:
+                param = line[1].split(':')[0]
+                if param=='dw':
+                    dw = float( line[2] )
+                    if verbose: 'using specified dw=',dw
+                    #break
+            except IndexError: pass
+            continue
+        else:
+            Nwaves += 1
         line = line.split()
         if dw==0: 
             dw = -float(line[0])
         elif dw < 0: 
             dw += float(line[0])
-            break
-        else:
-            print 'shouldn''t be here!!!'
-            break
-if verbose: print 'dw=',dw
+            if verbose: print 'calculated dw=',dw
+            #break
+        #else:
+        #    print 'shouldn''t be here!!!'
+        #    break
+print 'Nwaves =',Nwaves
 
 #-- second time: process each mode and write to file or stdout
-out = open(name+'.java','w')
-with open(fname,'r') as f:
-
+ipart = 0
+#out = open(name+'.java','w')
+if Nwaves > maxWaves_per_file:
+    ipart = 1
+    partname = name+'_part'+str(ipart)
+    out = open(partname+'.java','w')
+    print 'Writing',partname+'.java'
+    out.write(headerstr.format(macroName=partname))
+else:
+    out = open(name+'.java','w')
     if out: out.write(headerstr.format(macroName=name))
     else: print headerstr.format(macroName=name)
+with open(fname,'r') as f:
 
     iwave = 0
     for line in f:
@@ -106,6 +129,15 @@ with open(fname,'r') as f:
                     if verbose: print '>>>>>>>>> SETTING',param,'TO',x_start,'<<<<<<<<<'
             except IndexError: pass
             continue
+
+        if ipart > 0 and iwave >= ipart*maxWaves_per_file:
+            out.write(closestr)
+            out.close()
+            ipart += 1
+            partname = name+'_part'+str(ipart)
+            out = open(partname+'.java','w')
+            print 'Writing',partname+'.java'
+            out.write(headerstr.format(macroName=partname))
 
         # At this point we should be done reading the header...
         # perform sanity checks:
@@ -134,8 +166,9 @@ with open(fname,'r') as f:
 # new formulation has different sign on phi
 #        if out: out.write(wavestr.format(A, -phi+shift, T, waveIdx=iwave))
 #        else: print wavestr.format(A, phi, T, waveIdx=iwave)
-        if out: out.write(wavestr.format(A, phi+shift, T, waveIdx=iwave))
-        else: print wavestr.format(A, phi+shift, T, waveIdx=iwave)
+# changed to use addSubWave method to shorten code
+        if out: out.write(wavestr.format(A, phi+shift, T))
+        else: print wavestr.format(A, phi+shift, T)
 
         iwave += 1
 
@@ -143,4 +176,14 @@ with open(fname,'r') as f:
     else: print closestr
 
 out.close()
-print 'wrote',name+'.java'
+if ipart==0:
+    print 'wrote',name+'.java'
+else:
+    print '---'
+    print 'Add to main macro file:'
+    print ''
+    for i in range(1,ipart+1):
+        print """new StarScript(getActiveSimulation(),
+                new java.io.File(resolvePath("{:s}_part{:d}.java"))).play();""".format(name,i)
+    print ''
+

@@ -149,7 +149,7 @@ else:
 for irand in range(Nrealizations):
 
     # generate random amplitude components
-    sigma_R = np.sqrt(2/pi) * 2*S*dw
+    sigma_R = np.sqrt(2/pi) * 2*S*dw #expectation: 2*S*dw
     rand_A2[:] = 0.0
     for i,sig in enumerate(sigma_R):
         if sig==0:
@@ -216,6 +216,7 @@ for irand in range(Nrealizations):
             f.write('#       d:\t{:f}\t(m/s^2)\n'.format(d))
             f.write('#      Hs:\t{:f}\t(m)\n'.format(Hs))
             f.write('#      Tp:\t{:f}\t(s)\n'.format(Tp))
+            f.write('#      dw:\t{:f}\t(rad/s, bandwidth of each wave component)\n'.format(dw))
             f.write('# x_start:\t{:f}\t(m, CFD inlet location)\n'.format(x_start))
             f.write('#    Tmax:\t{:f}\t(s)\n'.format(Tmax))
             f.write('#      wm:\t{:f}\t(s, modal frequency)\n'.format(wm))
