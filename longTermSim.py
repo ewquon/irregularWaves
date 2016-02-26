@@ -24,14 +24,19 @@ Tp = 15.1           # peak period, s
 Hs = 9.0            # significant wave height, m
 wm = twopi/Tp       # modal frequency, rad/s
 Tmax = 3*60*60.0    # simulation length, s
-
-write_coeffs = True
-write_name = 'equalDw'
-x_start = -300.0    # CFD inlet location, m
-
-Nwavelets = 5000
+Nwavelets = 6000
 Nrealizations = 1 #500
-#Nt = 10000 # number of points to calculate in each realization for estimating Hs and FFT calc
+#Nt = 5000 # number of points to calculate in each realization for estimating Hs and FFT calc
+Nt = 2*Nwavelets
+random_amplitude = False
+
+write_coeffs = False
+write_name = 'equalDw'
+
+xref = 600.0 # Star wave surface reference location, m
+xshift = 0.0 # spatial shift to accommodate the domain
+tshift = 0.0 # temporal shift
+
 plot_realizations = True       # should set Nrealizations=1 for this to be useful
 plot_overlay = False            # only active if plot_realizations==True
 optimize_panel_areas = False
@@ -71,9 +76,10 @@ totalarea = Hs**2/16.0 * (np.exp(-1.25*wm**4/wmax**4) - np.exp(-1.25*wm**4/wmin*
 
 if verbose: 
     print ''
-    print 'Exact variance                   =', totalarea
+    print 'Exact variance (wmax->Inf) =',Hs**2/16.0
+    print 'Exact variance (wmax={:f}) = {:f}'.format(wmax,totalarea)
     print 'Hs from truncated spectrum       =', 4*totalarea**0.5
-    print '  equal dw : calculated variance =', M0
+    print '  equal dw : integrated variance =', M0
     print '  equal dw : estimated Hs        =', 4*M0**0.5
 
 #-------------------------------------------------------------------------------
@@ -123,7 +129,6 @@ if plot_realizations or debug:
     plt.figure()
     plt.xlabel('time [s]')
     plt.ylabel('wave elevation [m]')
-Nt = 2*Nwavelets
 dt = Tmax/Nt
 print 'Nt=',Nt
 t = np.linspace(0,Tmax,Nt)
@@ -136,6 +141,7 @@ A_max_mean = 0.
 A_max_abs = 0.
 Sfft_mean = np.zeros((Nt))
 M0_rand = np.zeros((Nrealizations))
+M0_stat = np.zeros((Nrealizations))
 rand_A2 = np.zeros((Nwavelets))
 
 if verbose: print '\n--------------------------------------'
@@ -149,13 +155,16 @@ else:
 for irand in range(Nrealizations):
 
     # generate random amplitude components
-    sigma_R = np.sqrt(2/pi) * 2*S*dw #expectation: 2*S*dw
-    rand_A2[:] = 0.0
-    for i,sig in enumerate(sigma_R):
-        if sig==0:
-            rand_A2[i] = 0.0
-            continue
-        rand_A2[i] = np.random.rayleigh(scale=sig)
+    if random_amplitude:
+        sigma_R = np.sqrt(2/pi) * 2*S*dw #expectation: 2*S*dw
+        rand_A2[:] = 0.0
+        for i,sig in enumerate(sigma_R):
+            if sig==0:
+                rand_A2[i] = 0.0
+                continue
+            rand_A2[i] = np.random.rayleigh(scale=sig)
+    else:
+        rand_A2 = 2*S*dw
     rand_A = rand_A2**0.5
     M0_rand[irand] = np.sum(rand_A2)/2 #--eqn 97
 
@@ -169,6 +178,10 @@ for irand in range(Nrealizations):
     for i,ti in enumerate(t):
         Z[i] = np.sum( rand_A*np.cos(-w*ti + rand_phi) )
     if plot_realizations or debug: plt.plot(t,Z)
+
+    # calculate statistical variance
+    exZ = np.mean(Z)
+    M0_stat[irand] = np.sum( (Z-exZ)**2 ) / (Nt-1)
 
     # find peaks to estimate Hs
     Zpeaks,ipeaks = peaks.find_peaks(Z,t,Nsmoo=2)
@@ -216,8 +229,10 @@ for irand in range(Nrealizations):
             f.write('#       d:\t{:f}\t(m/s^2)\n'.format(d))
             f.write('#      Hs:\t{:f}\t(m)\n'.format(Hs))
             f.write('#      Tp:\t{:f}\t(s)\n'.format(Tp))
-            f.write('#      dw:\t{:f}\t(rad/s, bandwidth of each wave component)\n'.format(dw))
-            f.write('# x_start:\t{:f}\t(m, CFD inlet location)\n'.format(x_start))
+            f.write('#      dw:\t{:g}\t(rad/s, bandwidth of each wave component)\n'.format(wmin))
+            f.write('#    xref:\t{:f}\t(m, Star wave surface reference location)\n'.format(xref))
+            f.write('#  xshift:\t{:f}\t(m, spatial shift applied for Star)\n'.format(xshift))
+            f.write('#  tshift:\t{:f}\t(m, temporal shift applied for Star)\n'.format(tshift))
             f.write('#    Tmax:\t{:f}\t(s)\n'.format(Tmax))
             f.write('#      wm:\t{:f}\t(s, modal frequency)\n'.format(wm))
             f.write('#       N:\t{:d}\t(-, number of wave components)\n'.format(Nwavelets))
@@ -238,9 +253,12 @@ if verbose:
     print '  absolute max amp.  =', A_max_abs
     print '  average max amp.   =', A_max_mean
     print '  average Hs         =', Hs_mean
-    print '  average M0         =', np.mean(M0_rand) # for one-sided spectrum
-    print '  variance of M0     =', np.var(M0_rand) # for one-sided spectrum
-    print '  estimated Hs(M0)   =', 4*np.mean(M0_rand)**0.5
+    print '  average integrated M0          =', np.mean(M0_rand) # for one-sided spectrum
+    print '  variance of integrated M0      =', np.var(M0_rand) # for one-sided spectrum
+    print '  estimated Hs(integrated M0)    =', 4*np.mean(M0_rand)**0.5
+    print '  average statistical M0         =', np.mean(M0_stat) # for one-sided spectrum
+    print '  variance of statistical M0     =', np.var(M0_stat) # for one-sided spectrum
+    print '  estimated Hs(statistical M0)   =', 4*np.mean(M0_stat)**0.5
 
 #-------------------------------------------------------------------------------
 #
@@ -285,6 +303,11 @@ ax.legend(loc='best')
 #    ax_snapshot[itime].set_ylim((-1.5*Hs,1.5*Hs))
 
 
-plt.xlim((0,300))
+if not write_coeffs:
+    print '||------------------------||'
+    print '||------------------------||'
+    print '|| NO OUTPUT WAS WRITTEN! ||'
+    print '||------------------------||'
+    print '||------------------------||'
 plt.show()
 

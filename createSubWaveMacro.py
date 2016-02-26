@@ -5,15 +5,22 @@ from math import pi
 if len(sys.argv) <= 1:
     print 'USAGE:',sys.argv[0],'coeffs.txt'
     sys.exit()
+fname = sys.argv[1]
+# FOR DEBUG:
+#fname = 'Hs9_Tp15_equalDw_coeffs0.txt'
 
-t_peak = 0.0 # time offset
-x_start = 0.0 # inflow location relative to device
+tshift = 0.0 # time offset
+xshift = 0.0 # spatial offset
+xref = 0.0 # inflow location relative to device
 output_zero_amplitude = False
 verbose = True
 maxWaves_per_file = 2500
 
+# 
+# Star java macro snippets# {{{
+#
 # TODO: Update header as needed (e.g. to change the name of the physics
-#       continuum or the superposition VOF wave
+#       continuum or the superposition VOF wave)
 headerstr = """// STAR-CCM+ macro: addSubWave.java
 package macro;
 
@@ -50,21 +57,22 @@ public class {macroName:s} extends StarMacro {{
 """
 
 # TODO: Update subwave specification as needed
-wavestr = "    addSubWave( supWave, {:f}, {:f}, {:f} );\n"
+wavestr = "    addSubWave( supWave, {:f}, {:f}, {:f} ); // wave {iwave:d}\n"
 closestr = """
   }
 }"""
+
+# }}}
+#
 
 #
 # EXECUTION STARTS HERE
 #
 
-fname = sys.argv[1]
-name = '.'.join(fname.split('.')[:-1])
-
 #-- first time: get delta omega
 dw = 0
 Nwaves = 0
+name = '.'.join(fname.split('.')[:-1])
 with open(fname,'r') as f:
     for line in f:
         if line.startswith('#'): #continue
@@ -102,8 +110,7 @@ if Nwaves > maxWaves_per_file:
     out.write(headerstr.format(macroName=partname))
 else:
     out = open(name+'.java','w')
-    if out: out.write(headerstr.format(macroName=name))
-    else: print headerstr.format(macroName=name)
+    out.write(headerstr.format(macroName=name))
 with open(fname,'r') as f:
 
     iwave = 0
@@ -115,18 +122,12 @@ with open(fname,'r') as f:
             line = line.split()
             try:
                 param = line[1]
-                if param.startswith('t0'): # time for peak
-                    t0 = float(line[2])
-                    if verbose: print '>>>>>>>>> SETTING',param,'TO',t0,'<<<<<<<<<'
-                elif param.startswith('startTime'): # time for peak
-                    t_start = float(line[2])
-                    if verbose: print '>>>>>>>>> SETTING',param,'TO',t_start,'<<<<<<<<<'
-                elif param.startswith('t_peak'): # time at start of simulation
-                    t_peak = float(line[2])
-                    if verbose: print '>>>>>>>>> SETTING',param,'TO',t_peak,'<<<<<<<<<'
-                elif param.startswith('x_start'):
-                    x_start = float(line[2])
-                    if verbose: print '>>>>>>>>> SETTING',param,'TO',x_start,'<<<<<<<<<'
+                if param.startswith('tshift'): # time shift
+                    tshift = float(line[2])
+                    if verbose: print '>>>>>>>>> SETTING',param,'TO',tshift,'<<<<<<<<<'
+                elif param.startswith('xref'):
+                    xref = float(line[2])
+                    if verbose: print '>>>>>>>>> SETTING',param,'TO',xref,'<<<<<<<<<'
             except IndexError: pass
             continue
 
@@ -138,43 +139,30 @@ with open(fname,'r') as f:
             out = open(partname+'.java','w')
             print 'Writing',partname+'.java'
             out.write(headerstr.format(macroName=partname))
+        # at this point we should be done reading the header...
 
-        # At this point we should be done reading the header...
-        # perform sanity checks:
-        try:
-            assert( t_peak >= 0 )
-        except NameError:
-            t_peak = t0 - t_start
-            print 'Calculated time at peak response =',t_peak
-
-        # z(x,t) = dw * np.sum( A*np.cos( k*x - w*(t-toffset) + phi ) )
-        #A, phi, T = [ float(val) for val in line.split() ]
-        #print A, phi, T
+        # Coefficients are defined given the following the definition of surface elevation:
+        #   z(x,t) = dw * np.sum( A*np.cos( k*x - w*t - phi ) )
         w, S, phi, k = [ float(val) for val in line.split() ]
         if not output_zero_amplitude and S==0: continue
         T = 2*pi/w
         A = dw * S**0.5
 
-        # adjustments for domain size
-        # w/o correction, the peak should occur at x=0, t=0
-        #TODO: currently assuming that -x_start == xout
-        #shift = -k*xout + pi/2 - w*t_peak
-        shift = k*x_start - w*t_peak + pi/2
-
-        # A: [m], phi: [rad], T: [s]
-# changed 2/10/16
-# new formulation has different sign on phi
-#        if out: out.write(wavestr.format(A, -phi+shift, T, waveIdx=iwave))
-#        else: print wavestr.format(A, phi, T, waveIdx=iwave)
-# changed to use addSubWave method to shorten code
-        if out: out.write(wavestr.format(A, phi+shift, T))
-        else: print wavestr.format(A, phi+shift, T)
+        # domain adjustments
+        # note the wave definition in Star is:
+        #   z(x,t) = np.sum( A*np.cos( k*(x-xref) - w*t - phi + pi/2 )
+        # xshift > 0 : shifts wavetrain to the right
+        # tshift > 0 : shifts wavetrain forward in time
+        shift = -k*xref + pi/2 + k*xshift + w*tshift
 
         iwave += 1
+        out.write(wavestr.format(A, phi+shift, T, iwave=iwave))
 
-    if out: out.write(closestr)
-    else: print closestr
 
+    # end of loop over all lines in file
+    out.write(closestr)
+
+# input file closed
 out.close()
 if ipart==0:
     print 'wrote',name+'.java'
